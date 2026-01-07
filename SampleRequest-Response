@@ -1,0 +1,200 @@
+1. Login Phase
+
+1.1 Login Request
+{
+ "ClientId": "ATM123",
+ "ClientRequestNumber": "REQ001",
+ "ClientRequestTime": "2026-01-07T07:42:00Z",
+ "ClientUniqueHardwareId": "HW987654",
+ "ConsumerIdentificationData": {
+ "Track2": "1234567890123456=26012010000000000000",
+ "EMVTags": [
+ "9F02",
+ "5F2A"
+ ],
+ "ManualDataType": "EMV"
+ }
+}
+1.2 Login Response
+{
+ "ResponseCode": "00",
+ "EnabledTransactions": [
+ "Withdrawal",
+ "BalanceInquiry"
+ ],
+ "ConsumerGroup": "Retail",
+ "ExtendedTransactionResponseCode": "00",
+ "CardDataElementEntitlements": [
+ "PIN",
+ "FastCash"
+ ],
+ "CardProductProperties": {
+ "MinPinLength": 4,
+ "MaxPinLength": 6,
+ "FastSupported": true,
+ "FastCashAmount": 100
+ },
+ "TransactionsSupported": [
+ "Withdrawal",
+ "BalanceInquiry",
+ "MiniStatement"
+ ]
+}
+2. Preferences Phase
+2.1 Preferences Request
+{
+ "ClientId": "ATM123",
+ "ClientRequestNumber": "REQ002",
+ "ClientRequestTime": "2026-01-07T07:43:00Z",
+ "ClientUniqueHardwareId": "HW987654",
+ "CardPosition": "Inserted",
+ "Preferences": {
+ "Language": "EN",
+ "EmailID": "user@example.com",
+ "ReceiptPreference": "Email",
+ "FastCashPreference": true
+ }
+}
+2.2 Preferences Response
+{
+ "AuthorizerResponseCode": "00",
+ "AcquirerResponseCode": "00",
+ "ActionCode": "Approved",
+ "MessageSequenceNumber": "MSG001",
+ "CustomerId": "CUST123456",
+ "SessionLanguageCode": "EN",
+ "EmailAddress": "user@example.com",
+ "ReceiptPreferenceCode": "E",
+ "FastCashTransactionAmount": 100,
+ "FastCashSourceAccountNumber": "9876543210",
+ "FastCashSourceProductTypeCode": "SAV"
+}
+3. PIN Validation + Account Overview
+3.1 PIN Validation + Account Overview Request
+{
+ "ClientId": "ATM123",
+ "ClientRequestNumber": "REQ003",
+ "EncryptedPinData": "ABCD1234XYZ",
+ "EmvAuthorizeRequestData": {
+ "Tag57": "value",
+ "Tag5FA": "value"
+ },
+ "Breadcrumb": "Step3"
+}
+3.2 PIN Validation + Account Overview Response
+{
+ "AuthorizerResponseCode": "00",
+ "AcquirerResponseCode": "00",
+ "ActionCode": "Approved",
+ "MessageSequenceNumber": "MSG002",
+ "IssuerResponseCode": "00",
+ "PrimaryAccountNumber": "9876543210",
+ "CptCardClassCode": "CLASS1",
+ "TransactionMode": "Online",
+ "Breadcrumb": "Step3",
+ "ResponseCode": "00",
+ "IntendedWkstState": "Active",
+ "HostResponseCode": "00",
+ "Accounts": [
+ {
+ "AccountNumber": "9876543210",
+ "Balance": 5000,
+ "Currency": "USD"
+ }
+ ],
+ "SupportedTransactions": [
+ "Withdrawal",
+ "BalanceInquiry"
+ ]
+}
+4. Account Overview Finalization
+4.1 Account Overview Finalize Request
+{
+ "ClientId": "ATM123",
+ "ClientRequestNumber": "REQ004",
+ "ClientRequestTime": "2026-01-07T07:44:00Z",
+ "ClientUniqueHardwareId": "HW987654",
+ "CardPosition": "Inserted",
+ "ClientTransactionResult": "Confirmed",
+ "AccountingState": "Final",
+ "CardUpdateState": "NoUpdate",
+ "EmvFinalizeRequestData": {
+ "Tags": [
+ "9F02",
+ "5F2A"
+ ]
+ }
+}
+4.2 Account Overview Finalize Response
+{
+ "ExtendedTransactionResponseCode": "00",
+ "ResponseCode": "00",
+ "IntendedWkstState": "Active",
+ "EnabledTransactions": [
+ "Withdrawal",
+ "BalanceInquiry"
+ ]
+}
+5. Withdrawal Authorization
+5.1 Withdrawal Authorize Request
+{
+ "ClientId": "ATM123",
+ "ClientRequestNumber": "REQ005",
+ "ClientRequestTime": "2026-01-07T07:45:00Z",
+ "ClientUniqueHardwareId": "HW987654",
+ "CardPosition": "Inserted",
+ "HostTransactionNumber": "TXN123456",
+ "EncryptedPinData": "ABCD1234XYZ",
+ "EmvAuthorizeRequestData": {
+ "Tag57": "value",
+ "Tag5FA": "value"
+ },
+ "CardTechnology": "EMV",
+ "SourceAccount": {
+ "Number": "9876543210",
+ "Type": "SAV",
+ "Subtype": "Regular"
+ },
+ "RequestedAmount": 100,
+ "Currency": "USD"
+}
+5.2 Withdrawal Authorize Response
+{
+ "AuthorizerResponseCode": "00",
+ "AcquirerResponseCode": "00",
+ "ActionCode": "Approved",
+ "MessageSequenceNumber": "MSG003",
+ "CptCardClassCode": "CLASS1",
+ "TransactionMode": "Online",
+ "TransactionAmount": 100,
+ "Currency": "USD",
+ "FractionDigits": 2,
+ "DebitedAccount": {
+ "AccountNumber": "9876543210",
+ "AccountType": "SAV",
+ "Subtype": "Regular"
+ },
+ "WithdrawalDailyLimits": {
+ "Amount": 500,
+ "CurrencyCode": "USD",
+ "FractionDigits": 2
+ },
+ "ResponseCode": "00",
+ "EnabledTransactions": [
+ "Withdrawal",
+ "BalanceInquiry"
+ ],
+ "EmvAuthorizeResponseData": {
+ "Tag57": "value",
+ "Tag5FA": "value"
+ },
+ "AccountInformation": {
+ "Balance": 4900,
+ "CurrencyCode": "USD",
+ "FractionDigits": 2
+ },
+ "PossibleLimits": [
+ "DailyLimit",
+ "PerTransactionLimit"
+ ]
+}

@@ -8,7 +8,196 @@ from models import (
 )
 
 
-# Auth Schemas
+# 1. Login Phase Schemas
+class ConsumerIdentificationData(BaseModel):
+    Track2: str
+    EMVTags: List[str]
+    ManualDataType: str
+
+
+class LoginRequest(BaseModel):
+    ClientId: str
+    ClientRequestNumber: str
+    ClientRequestTime: str
+    ClientUniqueHardwareId: str
+    ConsumerIdentificationData: ConsumerIdentificationData
+
+
+class CardProductProperties(BaseModel):
+    MinPinLength: int
+    MaxPinLength: int
+    FastSupported: bool
+    FastCashAmount: float
+
+
+class LoginResponse(BaseModel):
+    ResponseCode: str
+    EnabledTransactions: List[str]
+    ConsumerGroup: str
+    ExtendedTransactionResponseCode: str
+    CardDataElementEntitlements: List[str]
+    CardProductProperties: CardProductProperties
+    TransactionsSupported: List[str]
+
+
+# 2. Preferences Phase Schemas
+class PreferencesData(BaseModel):
+    Language: str
+    EmailID: str
+    ReceiptPreference: str
+    FastCashPreference: bool
+
+
+class PreferencesRequest(BaseModel):
+    ClientId: str
+    ClientRequestNumber: str
+    ClientRequestTime: str
+    ClientUniqueHardwareId: str
+    CardPosition: str
+    Preferences: PreferencesData
+
+
+class PreferencesResponse(BaseModel):
+    AuthorizerResponseCode: str
+    AcquirerResponseCode: str
+    ActionCode: str
+    MessageSequenceNumber: str
+    CustomerId: str
+    SessionLanguageCode: str
+    EmailAddress: str
+    ReceiptPreferenceCode: str
+    FastCashTransactionAmount: float
+    FastCashSourceAccountNumber: str
+    FastCashSourceProductTypeCode: str
+
+
+# 3. PIN Validation + Account Overview Schemas
+class EmvAuthorizeRequestData(BaseModel):
+    Tag57: Optional[str] = None
+    Tag5FA: Optional[str] = None
+
+
+class PinValidationAccountOverviewRequest(BaseModel):
+    ClientId: str
+    ClientRequestNumber: str
+    EncryptedPinData: str
+    EmvAuthorizeRequestData: EmvAuthorizeRequestData
+    Breadcrumb: str
+
+
+class AccountInfo(BaseModel):
+    AccountNumber: str
+    Balance: float
+    Currency: str
+
+
+class PinValidationAccountOverviewResponse(BaseModel):
+    AuthorizerResponseCode: str
+    AcquirerResponseCode: str
+    ActionCode: str
+    MessageSequenceNumber: str
+    IssuerResponseCode: str
+    PrimaryAccountNumber: str
+    CptCardClassCode: str
+    TransactionMode: str
+    Breadcrumb: str
+    ResponseCode: str
+    IntendedWkstState: str
+    HostResponseCode: str
+    Accounts: List[AccountInfo]
+    SupportedTransactions: List[str]
+    JwtToken: Optional[str] = None  # Added for frontend authentication
+
+
+# 4. Account Overview Finalization Schemas
+class EmvFinalizeRequestData(BaseModel):
+    Tags: List[str]
+
+
+class AccountOverviewFinalizeRequest(BaseModel):
+    ClientId: str
+    ClientRequestNumber: str
+    ClientRequestTime: str
+    ClientUniqueHardwareId: str
+    CardPosition: str
+    ClientTransactionResult: str
+    AccountingState: str
+    CardUpdateState: str
+    EmvFinalizeRequestData: EmvFinalizeRequestData
+
+
+class AccountOverviewFinalizeResponse(BaseModel):
+    ExtendedTransactionResponseCode: str
+    ResponseCode: str
+    IntendedWkstState: str
+    EnabledTransactions: List[str]
+
+
+# 5. Withdrawal Authorization Schemas
+class SourceAccountData(BaseModel):
+    Number: str
+    Type: str
+    Subtype: str
+
+
+class WithdrawalAuthorizeRequest(BaseModel):
+    ClientId: str
+    ClientRequestNumber: str
+    ClientRequestTime: str
+    ClientUniqueHardwareId: str
+    CardPosition: str
+    HostTransactionNumber: str
+    EncryptedPinData: str
+    EmvAuthorizeRequestData: EmvAuthorizeRequestData
+    CardTechnology: str
+    SourceAccount: SourceAccountData
+    RequestedAmount: float
+    Currency: str
+
+
+class DebitedAccountData(BaseModel):
+    AccountNumber: str
+    AccountType: str
+    Subtype: str
+
+
+class WithdrawalDailyLimitsData(BaseModel):
+    Amount: float
+    CurrencyCode: str
+    FractionDigits: int
+
+
+class EmvAuthorizeResponseData(BaseModel):
+    Tag57: Optional[str] = None
+    Tag5FA: Optional[str] = None
+
+
+class AccountInformationData(BaseModel):
+    Balance: float
+    CurrencyCode: str
+    FractionDigits: int
+
+
+class WithdrawalAuthorizeResponse(BaseModel):
+    AuthorizerResponseCode: str
+    AcquirerResponseCode: str
+    ActionCode: str
+    MessageSequenceNumber: str
+    CptCardClassCode: str
+    TransactionMode: str
+    TransactionAmount: float
+    Currency: str
+    FractionDigits: int
+    DebitedAccount: DebitedAccountData
+    WithdrawalDailyLimits: WithdrawalDailyLimitsData
+    ResponseCode: str
+    EnabledTransactions: List[str]
+    EmvAuthorizeResponseData: EmvAuthorizeResponseData
+    AccountInformation: AccountInformationData
+    PossibleLimits: List[str]
+
+
+# Legacy Auth Schemas (keeping for backward compatibility)
 class PinAuthRequest(BaseModel):
     card_number: str
     pin: str

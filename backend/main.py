@@ -168,6 +168,212 @@ def authenticate_pin(request: PinAuthRequest, session: Session = Depends(get_ses
     )
 
 
+# New API Endpoints Following Sample Request-Response Format
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest, session: Session = Depends(get_session)):
+    """
+    Login Phase - Authenticate card and get enabled transactions.
+    Corresponds to Section 1 in SampleRequest-Response.
+    """
+    # Extract card number from Track2 data
+    track2_parts = request.ConsumerIdentificationData.Track2.split("=")
+    card_number = track2_parts[0] if track2_parts else ""
+    
+    # Validate card exists (simplified for demo)
+    if not card_number or len(card_number) < 10:
+        raise HTTPException(status_code=400, detail="Invalid card data")
+    
+    return LoginResponse(
+        ResponseCode="00",
+        EnabledTransactions=["Withdrawal", "BalanceInquiry"],
+        ConsumerGroup="Retail",
+        ExtendedTransactionResponseCode="00",
+        CardDataElementEntitlements=["PIN", "FastCash"],
+        CardProductProperties=CardProductProperties(
+            MinPinLength=4,
+            MaxPinLength=6,
+            FastSupported=True,
+            FastCashAmount=100
+        ),
+        TransactionsSupported=["Withdrawal", "BalanceInquiry", "MiniStatement"]
+    )
+
+
+@app.post("/preferences", response_model=PreferencesResponse)
+def set_preferences(request: PreferencesRequest, session: Session = Depends(get_session)):
+    """
+    Preferences Phase - Set user preferences including language, email, and receipt options.
+    Corresponds to Section 2 in SampleRequest-Response.
+    """
+    # Store preferences in session (simplified for demo)
+    # In production, this would update customer preferences in database
+    
+    return PreferencesResponse(
+        AuthorizerResponseCode="00",
+        AcquirerResponseCode="00",
+        ActionCode="Approved",
+        MessageSequenceNumber="MSG001",
+        CustomerId="CUST123456",
+        SessionLanguageCode=request.Preferences.Language,
+        EmailAddress=request.Preferences.EmailID,
+        ReceiptPreferenceCode="E" if request.Preferences.ReceiptPreference == "Email" else "P",
+        FastCashTransactionAmount=100 if request.Preferences.FastCashPreference else 0,
+        FastCashSourceAccountNumber="9876543210",
+        FastCashSourceProductTypeCode="SAV"
+    )
+
+
+@app.post("/auth/pin-validation", response_model=PinValidationAccountOverviewResponse)
+def pin_validation_account_overview(
+    request: PinValidationAccountOverviewRequest, 
+    x_session_id: Optional[str] = Header(None),
+    session: Session = Depends(get_session)
+):
+    """
+    PIN Validation + Account Overview - Validate PIN and return account information.
+    Corresponds to Section 3 in SampleRequest-Response.
+    """
+    # In production, decrypt and validate PIN
+    # For demo, we'll assume PIN is valid
+    
+    # Create or update database session if session ID is provided
+    jwt_token = None
+    if x_session_id:
+        try:
+            session_id = int(x_session_id)
+            # Check if session already exists
+            db_session = session.get(DBSession, session_id)
+            
+            if not db_session:
+                # Create JWT token for this session
+                token, expires_at = create_access_token(
+                    data={"session_id": session_id, "customer_id": 1}
+                )
+                jwt_token = token
+                
+                # Create new session in database
+                db_session = DBSession(
+                    id=session_id,
+                    customer_id=1,  # Demo customer
+                    card_number="4111111111111111",  # From login
+                    pin_attempts=0,
+                    status=SessionStatus.ACTIVE,
+                    channel="web",
+                    jwt_token=token,
+                    token_expires_at=expires_at,
+                    expires_at=datetime.utcnow() + timedelta(minutes=settings.jwt_expiry_minutes)
+                )
+                session.add(db_session)
+                session.commit()
+            else:
+                # Use existing token
+                jwt_token = db_session.jwt_token
+        except (ValueError, Exception) as e:
+            # Invalid session ID, continue without creating session
+            pass
+    
+    # Get customer accounts (simplified - using hardcoded data for demo)
+    accounts = [
+        AccountInfo(
+            AccountNumber="9876543210",
+            Balance=5000.0,
+            Currency="USD"
+        )
+    ]
+    
+    return PinValidationAccountOverviewResponse(
+        AuthorizerResponseCode="00",
+        AcquirerResponseCode="00",
+        ActionCode="Approved",
+        MessageSequenceNumber="MSG002",
+        IssuerResponseCode="00",
+        PrimaryAccountNumber="9876543210",
+        CptCardClassCode="CLASS1",
+        TransactionMode="Online",
+        Breadcrumb=request.Breadcrumb,
+        ResponseCode="00",
+        IntendedWkstState="Active",
+        HostResponseCode="00",
+        Accounts=accounts,
+        SupportedTransactions=["Withdrawal", "BalanceInquiry"],
+        JwtToken=jwt_token
+    )
+
+
+@app.post("/account-overview/finalize", response_model=AccountOverviewFinalizeResponse)
+def account_overview_finalize(
+    request: AccountOverviewFinalizeRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Account Overview Finalization - Finalize account overview phase.
+    Corresponds to Section 4 in SampleRequest-Response.
+    """
+    return AccountOverviewFinalizeResponse(
+        ExtendedTransactionResponseCode="00",
+        ResponseCode="00",
+        IntendedWkstState="Active",
+        EnabledTransactions=["Withdrawal", "BalanceInquiry"]
+    )
+
+
+@app.post("/transactions/withdrawal/authorize", response_model=WithdrawalAuthorizeResponse)
+def withdrawal_authorize(
+    request: WithdrawalAuthorizeRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Withdrawal Authorization - Authorize and process withdrawal transaction.
+    Corresponds to Section 5 in SampleRequest-Response.
+    """
+    # Validate account and balance (simplified for demo)
+    source_account_number = request.SourceAccount.Number
+    requested_amount = request.RequestedAmount
+    
+    # In production, would check actual account balance
+    current_balance = 5000.0  # Demo balance
+    
+    if current_balance < requested_amount:
+        raise HTTPException(status_code=400, detail="Insufficient funds")
+    
+    new_balance = current_balance - requested_amount
+    
+    return WithdrawalAuthorizeResponse(
+        AuthorizerResponseCode="00",
+        AcquirerResponseCode="00",
+        ActionCode="Approved",
+        MessageSequenceNumber="MSG003",
+        CptCardClassCode="CLASS1",
+        TransactionMode="Online",
+        TransactionAmount=requested_amount,
+        Currency=request.Currency,
+        FractionDigits=2,
+        DebitedAccount=DebitedAccountData(
+            AccountNumber=source_account_number,
+            AccountType=request.SourceAccount.Type,
+            Subtype=request.SourceAccount.Subtype
+        ),
+        WithdrawalDailyLimits=WithdrawalDailyLimitsData(
+            Amount=500.0,
+            CurrencyCode="USD",
+            FractionDigits=2
+        ),
+        ResponseCode="00",
+        EnabledTransactions=["Withdrawal", "BalanceInquiry"],
+        EmvAuthorizeResponseData=EmvAuthorizeResponseData(
+            Tag57="value",
+            Tag5FA="value"
+        ),
+        AccountInformation=AccountInformationData(
+            Balance=new_balance,
+            CurrencyCode="USD",
+            FractionDigits=2
+        ),
+        PossibleLimits=["DailyLimit", "PerTransactionLimit"]
+    )
+
+
 # Account Routes
 @app.get("/accounts/summary", response_model=AccountsResponse)
 def get_accounts_summary(
@@ -402,6 +608,13 @@ async def web_chat(
     
     # Get or create session
     if request.session_id:
+        # Validate session ID is within PostgreSQL INTEGER range
+        if request.session_id > 2147483647 or request.session_id < 1:
+            return ChatResponse(
+                messages=[],
+                error="Invalid session ID. Please log in again."
+            )
+        
         db_session = session.get(DBSession, request.session_id)
         if not db_session or db_session.status != SessionStatus.ACTIVE:
             return ChatResponse(

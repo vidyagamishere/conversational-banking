@@ -169,27 +169,53 @@ Always be professional, secure, and accurate."""
                 'message': f"How much would you like to {operation.lower()}?"
             }
         
-        # Extract account type
+        # Extract account type - improved logic to correctly identify user's intent
         from_account = None
         to_account = None
         
+        # First pass: check for explicitly mentioned account types
         for acc in accounts:
             acc_type = acc['type'].lower()
+            
             if operation in ['WITHDRAW', 'TRANSFER']:
-                if acc_type in message_lower and 'from' in message_lower or 'checking' in message_lower:
+                # Look for explicit mentions like "from checking", "checking account", "withdraw from checking"
+                if (f'from {acc_type}' in message_lower or 
+                    f'{acc_type} account' in message_lower or
+                    (operation == 'WITHDRAW' and acc_type in message_lower)):
                     from_account = acc
-                elif not from_account and acc_type == 'checking':
+                    break  # Found explicit mention, stop looking
+                    
+        # If no explicit source account found, use checking as default for withdraw/transfer
+        if operation in ['WITHDRAW', 'TRANSFER'] and not from_account:
+            for acc in accounts:
+                if acc['type'].lower() == 'checking':
                     from_account = acc
-            if operation == 'TRANSFER':
-                if acc_type in message_lower and 'to' in message_lower or 'savings' in message_lower:
+                    break
+        
+        # Handle destination account for transfers
+        if operation == 'TRANSFER':
+            for acc in accounts:
+                acc_type = acc['type'].lower()
+                # Look for "to savings", "to checking", etc.
+                if f'to {acc_type}' in message_lower:
                     to_account = acc
-                elif not to_account and acc_type == 'savings' and acc['id'] != from_account.get('id'):
-                    to_account = acc
-            if operation == 'DEPOSIT':
+                    break
+            # Default to the other account if not specified
+            if not to_account:
+                for acc in accounts:
+                    if acc['id'] != (from_account.get('id') if from_account else None):
+                        to_account = acc
+                        break
+                    
+        # Handle deposits
+        if operation == 'DEPOSIT':
+            for acc in accounts:
+                acc_type = acc['type'].lower()
                 if acc_type in message_lower:
                     to_account = acc
-                elif not to_account:
-                    to_account = acc
+                    break
+            if not to_account:
+                to_account = accounts[0] if accounts else None
         
         # Validate balance for withdrawals and transfers
         if operation == 'WITHDRAW' and from_account:
