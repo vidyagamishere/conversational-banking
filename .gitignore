@@ -55,3 +55,16 @@ htmlcov/
 *.log
 *.key
 *.pdf
+
+# Large files
+sample images/
+*.jpg
+*.png
+*.jpeg
+*.gif
+*.bmp
+
+# Build artifacts
+frontend-react/build/
+backend/build/
+*.pyc

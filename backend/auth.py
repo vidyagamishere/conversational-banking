@@ -1,22 +1,28 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import hashlib
 from config import get_settings
 
 settings = get_settings()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def verify_pin(plain_pin: str, hashed_pin: str) -> bool:
-    """Verify a PIN against its hash."""
-    return pwd_context.verify(plain_pin, hashed_pin)
+# Simple PIN validation for prototype - not for production use!
+def verify_pin(plain_pin: str, stored_pin: str) -> bool:
+    """Verify a PIN - simple comparison for prototype."""
+    # For prototype: direct comparison or simple hash comparison
+    if stored_pin.startswith('sha256:'):
+        # If it's a simple hash, verify against hash
+        pin_hash = 'sha256:' + hashlib.sha256(plain_pin.encode()).hexdigest()
+        return pin_hash == stored_pin
+    else:
+        # Direct comparison for prototype
+        return plain_pin == stored_pin
 
 
 def get_pin_hash(pin: str) -> str:
-    """Generate a hash for a PIN."""
-    return pwd_context.hash(pin)
+    """Generate a simple hash for a PIN - for prototype only."""
+    # Use simple SHA256 hash for prototype
+    return 'sha256:' + hashlib.sha256(pin.encode()).hexdigest()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> tuple[str, datetime]:

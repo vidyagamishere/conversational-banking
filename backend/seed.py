@@ -3,14 +3,14 @@ from datetime import datetime, timedelta
 from sqlmodel import Session, select
 from database import engine
 from models import (
-    Customer, Account, Transaction, AccountType,
+    Customer, Account, Card, Transaction, AccountType,
     OperationType, TransactionStatus, SQLModel
 )
 from auth import get_pin_hash
 
 
 def seed_database():
-    """Seed database with sample customers, accounts, and transactions."""
+    """Seed database with sample customers, accounts, cards, and transactions."""
     SQLModel.metadata.create_all(engine)
     
     with Session(engine) as session:
@@ -24,7 +24,8 @@ def seed_database():
         customer1 = Customer(
             name="John Doe",
             primary_email="john.doe@example.com",
-            preferred_language="en"
+            preferred_language="en",
+            pin_hash=get_pin_hash("1234")
         )
         session.add(customer1)
         session.commit()
@@ -34,11 +35,35 @@ def seed_database():
         customer2 = Customer(
             name="Maria Garcia",
             primary_email="maria.garcia@example.com",
-            preferred_language="es"
+            preferred_language="es",
+            pin_hash=get_pin_hash("5678")
         )
         session.add(customer2)
         session.commit()
         session.refresh(customer2)
+        
+        # Create cards for customers
+        card1 = Card(
+            customer_id=customer1.id,
+            card_number="4111111111111111",
+            card_number_masked="****1111",
+            card_type="DEBIT",
+            status="ACTIVE",
+            expiry_date="1228"  # Dec 2028
+        )
+        card2 = Card(
+            customer_id=customer2.id,
+            card_number="4222222222222222",
+            card_number_masked="****2222",
+            card_type="DEBIT",
+            status="ACTIVE",
+            expiry_date="0630"  # Jun 2030
+        )
+        session.add_all([card1, card2])
+        session.commit()
+        
+        print(f"Created card {card1.card_number_masked} for {customer1.name}")
+        print(f"Created card {card2.card_number_masked} for {customer2.name}")
         
         # Create accounts for Customer 1
         checking1 = Account(
@@ -46,19 +71,28 @@ def seed_database():
             type=AccountType.CHECKING,
             currency="USD",
             balance=2500.00,
-            status="ACTIVE"
+            status="ACTIVE",
+            account_number="1234567890",
+            account_number_masked="******7890",
+            account_name="My Checking"
         )
         savings1 = Account(
             customer_id=customer1.id,
             type=AccountType.SAVINGS,
             currency="USD",
             balance=4200.00,
-            status="ACTIVE"
+            status="ACTIVE",
+            account_number="1234567891",
+            account_number_masked="******7891",
+            account_name="Emergency Fund"
         )
         session.add_all([checking1, savings1])
         session.commit()
         session.refresh(checking1)
         session.refresh(savings1)
+        
+        print(f"Created {checking1.type} account {checking1.account_number_masked} for {customer1.name}")
+        print(f"Created {savings1.type} account {savings1.account_number_masked} for {customer1.name}")
         
         # Create accounts for Customer 2
         checking2 = Account(
@@ -66,19 +100,28 @@ def seed_database():
             type=AccountType.CHECKING,
             currency="USD",
             balance=1800.00,
-            status="ACTIVE"
+            status="ACTIVE",
+            account_number="2234567890",
+            account_number_masked="******7890",
+            account_name="Cuenta Corriente"
         )
         savings2 = Account(
             customer_id=customer2.id,
             type=AccountType.SAVINGS,
             currency="USD",
             balance=3600.00,
-            status="ACTIVE"
+            status="ACTIVE",
+            account_number="2234567891",
+            account_number_masked="******7891",
+            account_name="Ahorros"
         )
         session.add_all([checking2, savings2])
         session.commit()
         session.refresh(checking2)
         session.refresh(savings2)
+        
+        print(f"Created {checking2.type} account {checking2.account_number_masked} for {customer2.name}")
+        print(f"Created {savings2.type} account {savings2.account_number_masked} for {customer2.name}")
         
         # Create historical transactions for Customer 1
         transactions1 = [

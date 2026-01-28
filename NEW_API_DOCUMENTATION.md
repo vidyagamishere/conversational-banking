@@ -39,7 +39,7 @@ Authenticates the card and returns enabled transactions and card capabilities.
 ```json
 {
   "ResponseCode": "00",
-  "EnabledTransactions": ["Withdrawal", "BalanceInquiry"],
+  "EnabledTransactions": ["Withdrawal", "BalanceInquiry","CashDeposit","CheckDeposit","Transfer","Payments","PinChange"],
   "ConsumerGroup": "Retail",
   "ExtendedTransactionResponseCode": "00",
   "CardDataElementEntitlements": ["PIN", "FastCash"],
@@ -49,7 +49,7 @@ Authenticates the card and returns enabled transactions and card capabilities.
     "FastSupported": true,
     "FastCashAmount": 100
   },
-  "TransactionsSupported": ["Withdrawal", "BalanceInquiry", "MiniStatement"]
+  "TransactionsSupported": ["Withdrawal", "BalanceInquiry","CashDeposit","CheckDeposit","Transfer","Payments","PinChange"]
 }
 ```
 

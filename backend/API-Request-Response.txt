@@ -1,0 +1,271 @@
+API Endpoint Mapping (api.ts → Backend)
+===========================================
+
+1. getCards()
+- Endpoint: GET /cards
+- Request: None
+- Response:
+  [
+    { "card_number": "string", "card_number_masked": "string", "card_type": "string", "status": "string" }
+  ]
+- Summary: Fetches all cards for the user; backend returns a list of cards (masked for security).
+
+2. login(cardNumber)
+- Endpoint: POST /auth/login
+- Request:
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "ClientRequestTime": "string",
+    "ClientUniqueHardwareId": "string",
+    "ConsumerIdentificationData": {
+      "Track2": "string",
+      "EMVTags": ["string"],
+      "ManualDataType": "string"
+    }
+  }
+- Response: (abbreviated)
+  {
+    "ResponseCode": "string",
+    "EnabledTransactions": ["string"],
+    "ConsumerGroup": "string",
+    "CardProductProperties": { "MinPinLength": 4, "MaxPinLength": 6, ... },
+    ...
+  }
+- Summary: Authenticates card and returns allowed transactions and card properties.
+
+3. setPreferences(language, email, receiptPreference)
+- Endpoint: POST /preferences
+- Request:
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "ClientRequestTime": "string",
+    "ClientUniqueHardwareId": "string",
+    "CardPosition": "string",
+    "Preferences": {
+      "Language": "string",
+      "EmailID": "string",
+      "ReceiptPreference": "string",
+      "FastCashPreference": true
+    }
+  }
+- Response: (abbreviated)
+  {
+    "AuthorizerResponseCode": "string",
+    "AcquirerResponseCode": "string",
+    "ActionCode": "string",
+    ...
+  }
+- Summary: Sets user preferences (language, email, receipt) for the session.
+
+4. validatePinAndGetAccounts(pin, cardNumber, sessionId?)
+- Endpoint: POST /auth/pin-validation
+- Headers: X-Card-Number, X-Session-Id (optional)
+- Request:
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "EncryptedPinData": "string",
+    "EmvAuthorizeRequestData": { "Tag57": "string", "Tag5FA": "string" },
+    "Breadcrumb": "string"
+  }
+- Response: (abbreviated)
+  {
+    "AuthorizerResponseCode": "string",
+    "Accounts": [
+      { "id": 1, "AccountNumber": "string", "Type": "string", "Balance": 100.0, ... }
+    ],
+    "SupportedTransactions": ["string"],
+    ...
+  }
+- Summary: Validates PIN and returns account overview and allowed actions.
+
+5. finalizeAccountOverview()
+- Endpoint: POST /account-overview/finalize
+- Request:
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "ClientRequestTime": "string",
+    "ClientUniqueHardwareId": "string",
+    "CardPosition": "string",
+    "ClientTransactionResult": "string",
+    "AccountingState": "string",
+    "CardUpdateState": "string",
+    "EmvFinalizeRequestData": { "Tags": ["string"] }
+  }
+- Response: (abbreviated)
+  {
+    "ExtendedTransactionResponseCode": "string",
+    "ResponseCode": "string",
+    "IntendedWkstState": "string",
+    "EnabledTransactions": ["string"]
+  }
+- Summary: Finalizes the account overview phase and returns allowed transactions.
+
+6. authorizeWithdrawal(accountNumber, accountType, amount, currency)
+- Endpoint: POST /transactions/withdrawal/authorize
+- Request: (abbreviated)
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "ClientRequestTime": "string",
+    "ClientUniqueHardwareId": "string",
+    "CardPosition": "string",
+    "HostTransactionNumber": "string",
+    "EncryptedPinData": "string",
+    "EmvAuthorizeRequestData": { "Tag57": "string", "Tag5FA": "string" },
+    "CardTechnology": "string",
+    "SourceAccount": { "Number": "string", "Type": "string", "Subtype": "string" },
+    "RequestedAmount": 100.0,
+    "Currency": "USD"
+  }
+- Response: (abbreviated)
+  {
+    "AuthorizerResponseCode": "string",
+    "TransactionAmount": 100.0,
+    "Currency": "USD",
+    ...
+  }
+- Summary: Authorizes a withdrawal and returns transaction limits and status.
+
+7. authenticatePin(cardNumber, pin)
+- Endpoint: POST /auth/pin
+- Request:
+  { "card_number": "string", "pin": "string" }
+- Response:
+  { "success": true, "session_id": 1, "customer_id": 1, "jwt_token": "string", "remaining_attempts": 3, "error": null }
+- Summary: Legacy PIN authentication; returns session and customer info.
+
+8. getAccountsSummary()
+- Endpoint: GET /accounts/summary
+- Request: None
+- Response:
+  { "accounts": [ { "account_id": 1, "type": "string", "currency": "USD", "balance": 100.0 } ] }
+- Summary: Returns a summary of all user accounts.
+
+9. getAccountDetails(accountId)
+- Endpoint: GET /accounts/{account_id}/details
+- Request: None
+- Response: (abbreviated)
+  {
+    "account_id": 1,
+    "type": "string",
+    "currency": "USD",
+    "balance": 100.0,
+    "transactions": [ { "transaction_id": 1, ... } ]
+  }
+- Summary: Returns details and transaction history for a specific account.
+
+10. withdraw(fromAccountId, amount, currency)
+- Endpoint: POST /transactions/withdraw
+- Request:
+  { "session_id": 1, "from_account_id": 1, "amount": 100.0, "currency": "USD" }
+- Response:
+  { "success": true, "transaction": { ... }, "updated_balances": { "1": 900.0 }, "error": null }
+- Summary: Withdraws funds from an account and returns the result.
+
+11. deposit(toAccountId, amount, currency)
+- Endpoint: POST /transactions/deposit
+- Request:
+  { "session_id": 1, "to_account_id": 1, "amount": 100.0, "currency": "USD" }
+- Response: Same as withdraw
+- Summary: Deposits funds into an account and returns the result.
+
+12. transfer(fromAccountId, toAccountId, amount, currency)
+- Endpoint: POST /transactions/transfer
+- Request:
+  { "session_id": 1, "from_account_id": 1, "to_account_id": 2, "amount": 100.0, "currency": "USD" }
+- Response: Same as withdraw
+- Summary: Transfers funds between accounts and returns the result.
+
+13. transferV2(fromAccount, toAccount, amount, isExternal)
+- Endpoint: POST /transactions/transfer-v2
+- Request: (abbreviated)
+  {
+    "ClientId": "string",
+    "ClientRequestNumber": "string",
+    "ClientRequestTime": "string",
+    "ClientUniqueHardwareId": "string",
+    "CardPosition": "string",
+    "SourceAccount": { "Number": "string", "Type": "string" },
+    "DestinationAccount": { "Number": "string", "Type": "string", "Bank": "string (if external)" },
+    "TransferAmount": 100.0,
+    "Currency": "USD"
+  }
+- Response: (abbreviated)
+  { "success": true, ... }
+- Summary: Unified transfer for internal/external accounts.
+
+14. sendChatMessage(message, language)
+- Endpoint: POST /channels/web/chat
+- Request:
+  { "session_id": 1, "message": "string", "language": "en" }
+- Response: (abbreviated)
+  { "intent_id": 1, "operation": "WITHDRAW", "status": "PENDING", ... }
+- Summary: Sends a conversational message; backend returns detected intent and required info.
+
+15. createReceipt(transactionId, mode, email?)
+- Endpoint: POST /receipts
+- Request:
+  { "session_id": 1, "transaction_id": 123, "mode": "EMAIL", "email": "user@example.com" }
+- Response: (abbreviated)
+  { "success": true, ... }
+- Summary: Requests a receipt for a transaction.
+
+16. cashDeposit(accountId, payload)
+- Endpoint: POST /transactions/cash-deposit
+- Request: (see payload in method)
+- Response: (abbreviated)
+  { "success": true, "transaction_id": 123, "new_balance": 1100.0, ... }
+- Summary: Deposits cash and returns transaction info.
+
+17. checkDeposit(accountId, payload)
+- Endpoint: POST /transactions/check-deposit
+- Request: (see payload in method)
+- Response: (abbreviated)
+  { "success": true, "transaction_id": 123, "check_deposit_id": 789, ... }
+- Summary: Deposits a check and returns transaction info.
+
+18. billPayment(fromAccountId, payeeId, amount, paymentDate?)
+- Endpoint: POST /transactions/bill-payment
+- Request: (see method)
+- Response: (abbreviated)
+  { "success": true, "transaction_id": 123, "bill_payment_id": 456, ... }
+- Summary: Pays a bill and returns confirmation.
+
+19. getPayees()
+- Endpoint: GET /payees
+- Request: None
+- Response: (abbreviated)
+  [ { "id": 1, "nickname": "string", ... } ]
+- Summary: Returns a list of payees.
+
+20. addPayee(payeeData)
+- Endpoint: POST /payees
+- Request: (see payeeData)
+- Response: (abbreviated)
+  { "id": 1, "nickname": "string", ... }
+- Summary: Adds a new payee.
+
+21. changePin(payload)
+- Endpoint: POST /pin/change
+- Request: (see payload)
+- Response: (abbreviated)
+  { "ResponseCode": "00", "PinChangeStatus": "Success", ... }
+- Summary: Changes the PIN for a card.
+
+22. getExternalAccounts()
+- Endpoint: GET /accounts/external
+- Request: None
+- Response: (abbreviated)
+  [ { "id": 1, "nickname": "string", ... } ]
+- Summary: Returns a list of external accounts.
+
+23. addExternalAccount(accountData)
+- Endpoint: POST /accounts/external
+- Request: (see accountData)
+- Response: (abbreviated)
+  { "id": 1, "nickname": "string", ... }
+- Summary: Adds a new external account.

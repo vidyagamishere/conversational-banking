@@ -6,6 +6,15 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg://banking_user:banking_pass@yamanote.proxy.rlwy.net:53234/conversational_banking"
     
+    # Email/SMTP Settings
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = "vijayanishere@gmail.com"
+    smtp_password: str = "IrvingLife@456"  # App-specific password, set via env
+    smtp_use_tls: bool = True
+    sender_email: str = "vijayanishere@gmail.com"
+    sender_name: str = "Citi Conversational ATM Banking"    
+    
     # JWT
     jwt_secret_key: str = "your-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
