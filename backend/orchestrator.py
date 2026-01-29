@@ -4,9 +4,70 @@ import asyncio
 import json
 import logging
 import re
+import random
 from typing import Optional, Dict, Any, List
 from config import get_settings
 from models import PayeeCategory
+
+
+def simulate_bill_breakdown(amount: float) -> Dict[str, int]:
+    """
+    Simulates ATM device counting bills. Generates realistic denomination breakdown.
+    Mimics how a real ATM would count deposited cash.
+    
+    Args:
+        amount: Total amount in dollars
+    
+    Returns:
+        Dictionary with bill counts per denomination
+    """
+    result = {
+        "bills_100": 0,
+        "bills_50": 0,
+        "bills_20": 0,
+        "bills_10": 0,
+        "bills_5": 0,
+        "bills_1": 0,
+        "coins_amount": 0.0,
+    }
+    
+    if amount <= 0:
+        return result
+    
+    remaining = int(amount)
+    
+    # Realistic distribution: prefer larger bills (70% in $100s)
+    if remaining >= 100:
+        hundreds_amount = int(remaining * 0.7)
+        hundreds_amount = (hundreds_amount // 100) * 100
+        result["bills_100"] = hundreds_amount // 100
+        remaining -= hundreds_amount
+    
+    # Distribute remainder across smaller denominations
+    if remaining >= 50:
+        fifties = random.randint(0, remaining // 50)
+        result["bills_50"] = fifties
+        remaining -= fifties * 50
+    
+    if remaining >= 20:
+        twenties = remaining // 20
+        result["bills_20"] = twenties
+        remaining -= twenties * 20
+    
+    if remaining >= 10:
+        tens = remaining // 10
+        result["bills_10"] = tens
+        remaining -= tens * 10
+    
+    if remaining >= 5:
+        fives = remaining // 5
+        result["bills_5"] = fives
+        remaining -= fives * 5
+    
+    if remaining > 0:
+        result["bills_1"] = remaining
+    
+    return result
 
 settings = get_settings()
 
@@ -154,17 +215,23 @@ class OllamaOrchestrator:
     - account_id can be null; backend will map account_type to a concrete id.
 
     - CASH_DEPOSIT:
-    - Use operation = "CASH_DEPOSIT" for depositing physical cash notes, e.g.
-        "deposit 200 in cash into savings".
+    - Use operation = "CASH_DEPOSIT" ONLY for depositing physical cash money (bills and coins), e.g.
+        "deposit 200 in cash into savings", "deposit cash", "insert bills", "deposit 100 dollars cash".
+    - IMPORTANT: If the user says "cash", "bills", "coins", or "dollar bills", use CASH_DEPOSIT, NOT "DEPOSIT".
+    - Do NOT use CASH_DEPOSIT for checks/cheques - those use CHECK_DEPOSIT.
     - Extract amount, currency, and account_type when possible.
     - account_id may be null if not specified.
 
     - CHECK_DEPOSIT:
-    - Use operation = "CHECK_DEPOSIT" for depositing checks, e.g.
-        "deposit this check", "check deposit", "add my paycheck".
+    - Use operation = "CHECK_DEPOSIT" for depositing checks (also spelled "cheque"), e.g.
+        "deposit this check", "check deposit", "add my paycheck", "deposit a cheque",
+        "cheque deposit into my account", "deposit a check".
+    - CRITICAL: The word "check" or "cheque" refers to a paper bank check/cheque (a payment instrument),
+        NOT "checking account". "Deposit a check" means CHECK_DEPOSIT, not depositing to a checking account.
     - If a check number appears, put it in check_number, else null.
     - amount may be null if not spoken.
     - account_type and/or account_id should identify the target account.
+    - If no specific account is mentioned, set account_type to null so the backend can ask.
 
     - TRANSFER:
     - Use operation = "TRANSFER" when moving money between accounts, e.g.
@@ -332,6 +399,14 @@ class OllamaOrchestrator:
             return None
 
         op = intent.get("operation")
+        
+        # Normalize generic "DEPOSIT" to "CASH_DEPOSIT" if user mentioned cash
+        message_lower = message.lower()
+        if op == "DEPOSIT" and any(keyword in message_lower for keyword in ["cash", "bills", "coins", "dollar bills"]):
+            intent["operation"] = "CASH_DEPOSIT"
+            op = "CASH_DEPOSIT"
+            logging.info("[extract_transaction_intent] Normalized DEPOSIT to CASH_DEPOSIT based on keywords in message")
+        
         acct_type = intent.get("account_type")
         src_type = intent.get("source_account_type")
         dst_type = intent.get("destination_account_type")
@@ -778,6 +853,13 @@ class OllamaOrchestrator:
                             f"I'll help you deposit cash into {acc_label}. "
                             "Please insert the notes and confirm on the screen."
                         )
+                    
+                    # Simulate device counting bills if amount is provided
+                    simulated_denominations = None
+                    if amt and amt > 0:
+                        simulated_denominations = simulate_bill_breakdown(amt)
+                        logging.info(f"[CASH_DEPOSIT] Simulated bill breakdown for ${amt}: {simulated_denominations}")
+                    
                     return {
                         "success": True,
                         "message": human_msg,
@@ -795,12 +877,14 @@ class OllamaOrchestrator:
                                 "data": {
                                     "account_id": acct_id,
                                     "mode": "CASH_DEPOSIT",
+                                    "preselected_type": "cash",
                                 },
                             },
                             {
                                 "step": "cash_deposit_screen",
                                 "data": {
                                     "account_id": acct_id,
+                                    "denominations": simulated_denominations,
                                 },
                             },
                             {
