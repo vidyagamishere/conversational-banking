@@ -105,16 +105,13 @@ class OllamaOrchestrator:
         elif op == "CHECK_DEPOSIT":
             if not intent.get("account_id"):
                 errors.append("account_id is required")
-            # amount/check_number/check_date/payer_name can be collected via missing-fields
+            # Don't validate amount here - let CHECK_DEPOSIT operation logic handle it
+            # This allows proper conversational flow to ask for amount
+            # check_number, check_date, payer_name will be auto-generated if not provided
 
         elif op == "TRANSFER":
-            # normalize to from/to naming
-            if not intent.get("from_account_id"):
-                errors.append("from_account_id is required")
-            if not intent.get("to_account_id") and not intent.get("is_external"):
-                errors.append("to_account_id or is_external is required")
-            if intent.get("amount") in (None, 0):
-                errors.append("amount is required")
+            # Skip validation - TRANSFER handler will ask for missing fields conversationally
+            pass
 
         elif op == "CHANGE_PIN":
             if not intent.get("account_id"):
@@ -197,11 +194,12 @@ class OllamaOrchestrator:
     - BALANCE_INQUIRY:
     - Use operation = "BALANCE_INQUIRY" for any request to show balances or account info,
         e.g. "show my balance", "get my account info", "how much do I have".
-    - If the user mentions "checking", "savings", "money market", "high yield savings",
-        "health savings", "HSA", "student checking", "business checking", or similar,
-        map them into:
+    - CRITICAL: Only set account_type if the user EXPLICITLY mentions the account type.
+    - If the user EXPLICITLY mentions "checking", "savings", "money market", "high yield savings",
+        "health savings", "HSA", "student checking", "business checking", or similar, map them into:
         - account_type = "SAVINGS" for all savings-family products
         - account_type = "CHECKING" for all checking-family products.
+    - If the user just says "my account" or "account" without specifying a type, set account_type = null.
     - account_id can be null if not given; the backend will resolve it.
     - amount should be null.
 
@@ -209,29 +207,40 @@ class OllamaOrchestrator:
     - Use operation = "WITHDRAW" for cash withdrawals, e.g.
         "withdraw 100", "take out 50 from savings", "get 20 dollars from checking".
     - Extract amount as a number and currency if mentioned.
+    - CRITICAL: Only set account_type if the user EXPLICITLY mentions the account type.
     - Map product names to account_type the same way:
         - "savings", "money market", "high yield savings", "health savings", "HSA" -> "SAVINGS"
         - "checking", "student checking", "business checking", etc. -> "CHECKING".
+    - If the user just says "my account" or "account" without specifying a type, set account_type = null.
     - account_id can be null; backend will map account_type to a concrete id.
 
     - CASH_DEPOSIT:
     - Use operation = "CASH_DEPOSIT" ONLY for depositing physical cash money (bills and coins), e.g.
-        "deposit 200 in cash into savings", "deposit cash", "insert bills", "deposit 100 dollars cash".
+        "deposit 200 in cash into savings", "deposit cash", "insert bills", "deposit 100 dollars cash", "cash deposit".
     - IMPORTANT: If the user says "cash", "bills", "coins", or "dollar bills", use CASH_DEPOSIT, NOT "DEPOSIT".
     - Do NOT use CASH_DEPOSIT for checks/cheques - those use CHECK_DEPOSIT.
-    - Extract amount, currency, and account_type when possible.
+    - CRITICAL: Only set account_type if the user EXPLICITLY mentions the account type.
+    - If the user says "into my checking" or "into savings", set the appropriate account_type.
+    - If the user just says "my account" or "account" without specifying a type, set account_type = null.
+    - Extract amount, currency when possible.
     - account_id may be null if not specified.
+    - If amount is not specified, set it to null so the backend can collect it.
 
     - CHECK_DEPOSIT:
-    - Use operation = "CHECK_DEPOSIT" for depositing checks (also spelled "cheque"), e.g.
+    - Use operation = "CHECK_DEPOSIT" for depositing checks or cheques (a paper payment instrument), e.g.
         "deposit this check", "check deposit", "add my paycheck", "deposit a cheque",
-        "cheque deposit into my account", "deposit a check".
-    - CRITICAL: The word "check" or "cheque" refers to a paper bank check/cheque (a payment instrument),
-        NOT "checking account". "Deposit a check" means CHECK_DEPOSIT, not depositing to a checking account.
+        "cheque deposit into my account", "deposit a check", "deposit my check", "cheque deposit".
+    - CRITICAL DISTINCTION: The words "check" or "cheque" refer to a paper bank check (payment instrument),
+        NOT "checking account". "Deposit a check" or "Deposit a cheque" means CHECK_DEPOSIT.
+    - DO NOT confuse "check" (the payment instrument) with "checking account".
+    - CRITICAL: Only set account_type if the user EXPLICITLY mentions the account type.
+    - If the user says "into my checking" or "into savings", set the appropriate account_type.
+    - If the user just says "my account" or "account" without specifying a type, set account_type = null.
+    - Keywords for CHECK_DEPOSIT: "check", "cheque", "paycheck", "check number"
+    - Keywords for CASH_DEPOSIT: "cash", "bills", "coins", "dollar bills"
     - If a check number appears, put it in check_number, else null.
-    - amount may be null if not spoken.
-    - account_type and/or account_id should identify the target account.
-    - If no specific account is mentioned, set account_type to null so the backend can ask.
+    - amount may be null if not spoken - set it to null if not provided.
+    - account_id may be null if not specified.
 
     - TRANSFER:
     - Use operation = "TRANSFER" when moving money between accounts, e.g.
@@ -239,9 +248,12 @@ class OllamaOrchestrator:
         "move 50 to my savings account",
         "send 100 to my external bank account".
     - Extract amount and currency.
+    - CRITICAL: Only set source_account_type and destination_account_type if the user EXPLICITLY mentions them.
     - For internal transfers (between the customer's own accounts):
         - Set source_account_type and destination_account_type based on phrases like
             "from checking", "to savings", etc.
+        - If the user just says "from my account" without specifying type, set source_account_type = null.
+        - If the user just says "to my account" without specifying type, set destination_account_type = null.
     - If the user clearly indicates an external bank (e.g. "to another bank",
         "to my account at XYZ bank"), set is_external = true.
     - account_id / source_account_id / destination_account_id may be null; backend resolves them.
@@ -377,7 +389,9 @@ class OllamaOrchestrator:
         ]
     
     @staticmethod
-    def pick_account_id_for_type(accounts: list[dict], canonical_type: str) -> int | None:
+    def pick_account_id_for_type(canonical_type: str, accounts: list[dict]) -> int | None:
+        if not canonical_type:
+            return None
         ct = canonical_type.upper()
         logging.info("[pick_account_id_for_type] Looking for type=%s in accounts=%s", ct, accounts)
         matches = [a for a in accounts if (a.get("type") or "").upper() == ct]
@@ -407,6 +421,18 @@ class OllamaOrchestrator:
             op = "CASH_DEPOSIT"
             logging.info("[extract_transaction_intent] Normalized DEPOSIT to CASH_DEPOSIT based on keywords in message")
         
+        # Normalize "CASH_DEPOSIT" to "CHECK_DEPOSIT" if user mentioned check/cheque
+        if op == "CASH_DEPOSIT" and any(keyword in message_lower for keyword in ["check", "cheque", "paycheck"]):
+            intent["operation"] = "CHECK_DEPOSIT"
+            op = "CHECK_DEPOSIT"
+            logging.info("[extract_transaction_intent] Corrected CASH_DEPOSIT to CHECK_DEPOSIT based on keywords in message")
+        
+        # Normalize generic "DEPOSIT" to "CHECK_DEPOSIT" if user mentioned check/cheque
+        if op == "DEPOSIT" and any(keyword in message_lower for keyword in ["check", "cheque", "paycheck"]):
+            intent["operation"] = "CHECK_DEPOSIT"
+            op = "CHECK_DEPOSIT"
+            logging.info("[extract_transaction_intent] Normalized DEPOSIT to CHECK_DEPOSIT based on keywords in message")
+        
         acct_type = intent.get("account_type")
         src_type = intent.get("source_account_type")
         dst_type = intent.get("destination_account_type")
@@ -414,21 +440,9 @@ class OllamaOrchestrator:
         logging.info("[extract_transaction_intent] Accounts available: %s", accounts)
         logging.info("[extract_transaction_intent] Operation: %s, acct_type: %s, src_type: %s, dst_type: %s", op, acct_type, src_type, dst_type)
 
-        # Single-account ops
-        # Only auto-select account_id for operations other than BALANCE_INQUIRY
-        if op in ("WITHDRAW", "CASH_DEPOSIT", "CHECK_DEPOSIT", "CHANGE_PIN"):
-            if not intent.get("account_id") and acct_type:
-                intent["account_id"] = self.pick_account_id_for_type(accounts, acct_type)
-                logging.info("[extract_transaction_intent] Mapped account_type %s to account_id %s", acct_type, intent["account_id"])
-
-        # Transfers
-        if op == "TRANSFER":
-            if not intent.get("source_account_id") and src_type:
-                intent["source_account_id"] = self.pick_account_id_for_type(accounts, src_type)
-                logging.info("[extract_transaction_intent] Mapped source_account_type %s to source_account_id %s", src_type, intent["source_account_id"])
-            if not intent.get("destination_account_id") and dst_type:
-                intent["destination_account_id"] = self.pick_account_id_for_type(accounts, dst_type)
-                logging.info("[extract_transaction_intent] Mapped destination_account_type %s to destination_account_id %s", dst_type, intent["destination_account_id"])
+        # DO NOT auto-map account_type to account_id here
+        # Let process_conversation handle account selection with proper user prompts
+        # This ensures users are always asked to confirm their account selection
 
         logging.info("[extract_transaction_intent] Final intent: %s", intent)
         return intent
@@ -444,7 +458,7 @@ class OllamaOrchestrator:
         required_fields = {
             "WITHDRAW": ["account_id", "amount"],
             "CASH_DEPOSIT": ["account_id", "bills_100", "bills_50", "bills_20", "bills_10", "bills_5", "bills_1","total"],
-            "CHECK_DEPOSIT": ["account_id", "check_number", "check_date", "payer_name", "amount"],
+            "CHECK_DEPOSIT": ["account_id", "amount"],  # check details auto-generated by device
             "TRANSFER": ["from_account_id", "to_account_id", "amount"],
             "BILL_PAYMENT": ["from_account_id", "payee_id", "amount"],
             "PIN_CHANGE": ["account_id", "old_pin", "new_pin"], 
@@ -502,8 +516,10 @@ class OllamaOrchestrator:
         logging.info("[process_conversation] Session accounts: %s", accounts)
 
         # ----------------------------------------------------------------------
-        # A) Handle follow-up: "Use account id: 123"
+        # A) Handle follow-up responses
         # ----------------------------------------------------------------------
+        
+        # A1) Handle "Use account id: 123"
         account_id_match = re.match(r"Use account id: (\d+)", message.strip(), re.IGNORECASE)
         if account_id_match:
             selected_id = int(account_id_match.group(1))
@@ -527,20 +543,118 @@ class OllamaOrchestrator:
                     "error": "NO_PREVIOUS_INTENT",
                 }
 
-            # Patch account_id and re-validate
-            last_intent["account_id"] = selected_id
-            errors = self.validate_intent(last_intent)
-            if errors:
-                logging.info("[process_conversation] Follow-up intent still invalid: %s", errors)
-                return {
-                    "success": False,
-                    "message": f"Still missing required info: {errors}",
-                    "error": "MISSING_FIELDS",
-                }
+            # Patch account_id and fall through to normal handling
+            if last_intent.get("operation") == "TRANSFER":
+                # For TRANSFER: determine if this is source or destination account
+                if not last_intent.get("from_account_id") and not last_intent.get("source_account_id"):
+                    last_intent["from_account_id"] = selected_id
+                    last_intent["source_account_id"] = selected_id
+                    logging.info("[process_conversation] TRANSFER: Patched source account_id=%s", selected_id)
+                elif not last_intent.get("to_account_id") and not last_intent.get("destination_account_id"):
+                    last_intent["to_account_id"] = selected_id
+                    last_intent["destination_account_id"] = selected_id
+                    logging.info("[process_conversation] TRANSFER: Patched destination account_id=%s", selected_id)
+                else:
+                    last_intent["from_account_id"] = selected_id
+                    last_intent["source_account_id"] = selected_id
+            else:
+                last_intent["account_id"] = selected_id
+            logging.info("[process_conversation] Patched account_id into pending intent: %s", last_intent)
 
-            # Treat this as the current intent and fall through to normal handling
             intent = last_intent
             session_context["pending_intent"] = intent
+            
+        # A2) Handle numeric responses for check deposit flow
+        elif session_context.get("pending_intent", {}).get("operation") == "CHECK_DEPOSIT":
+            last_intent = session_context.get("pending_intent")
+            check_collection_state = last_intent.get("_check_collection_state", {})
+            
+            logging.info("[process_conversation] A2: CHECK_DEPOSIT numeric handler - last_intent=%s, check_collection_state=%s", last_intent, check_collection_state)
+            
+            # Try to parse numeric response
+            try:
+                numeric_value = float(message.strip().replace("$", "").replace(",", ""))
+                logging.info("[process_conversation] A2: Parsed numeric value: %s", numeric_value)
+                
+                # Check if we're collecting number of checks
+                if not check_collection_state.get("num_checks"):
+                    num_checks = int(numeric_value)
+                    if num_checks <= 0 or num_checks > 50:
+                        logging.warning("[process_conversation] A2: Invalid num_checks: %s", num_checks)
+                        return {
+                            "success": False,
+                            "message": "Please enter a valid number of checks (1-50).",
+                            "error": "INVALID_NUMBER",
+                        }
+                    
+                    check_collection_state["num_checks"] = num_checks
+                    check_collection_state["checks"] = []
+                    last_intent["_check_collection_state"] = check_collection_state
+                    logging.info(f"[process_conversation] A2: num_checks set to {num_checks}, account_id={last_intent.get('account_id')}")
+                    
+                    intent = last_intent
+                    session_context["pending_intent"] = intent
+                    
+                # Check if we're collecting check amounts
+                elif len(check_collection_state.get("checks", [])) < check_collection_state.get("num_checks", 0):
+                    if numeric_value <= 0:
+                        logging.warning("[process_conversation] A2: Invalid check amount: %s", numeric_value)
+                        return {
+                            "success": False,
+                            "message": "Please enter a valid check amount greater than $0.",
+                            "error": "INVALID_AMOUNT",
+                        }
+                    
+                    # Generate check details with the provided amount
+                    import random
+                    from datetime import datetime
+                    
+                    check_number = f"CHK{random.randint(100000, 999999)}"
+                    payer_names = [
+                        "ABC Corporation", "XYZ Industries", "John Smith",
+                        "Jane Doe", "Global Services LLC", "Tech Solutions Inc."
+                    ]
+                    payer_name = random.choice(payer_names)
+                    check_date = datetime.utcnow().strftime("%Y-%m-%d")
+                    
+                    new_check = {
+                        "check_number": check_number,
+                        "check_date": check_date,
+                        "payer_name": payer_name,
+                        "amount": numeric_value
+                    }
+                    
+                    check_collection_state["checks"].append(new_check)
+                    last_intent["_check_collection_state"] = check_collection_state
+                    logging.info(f"[process_conversation] A2: added check {len(check_collection_state['checks'])}/{check_collection_state['num_checks']}, account_id={last_intent.get('account_id')}")
+                    
+                    intent = last_intent
+                    session_context["pending_intent"] = intent
+                else:
+                    # All checks collected, proceed normally
+                    logging.info("[process_conversation] A2: All checks collected, proceeding to flow_steps")
+                    intent = last_intent
+                    
+            except (ValueError, AttributeError) as e:
+                # Not a numeric response - but we have a pending CHECK_DEPOSIT, so ask user to provide just the number
+                logging.warning("[process_conversation] A2: Not a numeric response (error: %s), asking user for numeric input only", str(e))
+                
+                check_collection_state = last_intent.get("_check_collection_state", {})
+                if not check_collection_state.get("num_checks"):
+                    # Still collecting number of checks
+                    return {
+                        "success": False,
+                        "message": "Please enter just the number of checks (e.g., '3').",
+                        "error": "INVALID_FORMAT",
+                    }
+                else:
+                    # Collecting check amounts
+                    check_index = len(check_collection_state.get("checks", [])) + 1
+                    return {
+                        "success": False,
+                        "message": f"Please enter just the amount for check #{check_index} (e.g., '150.50').",
+                        "error": "INVALID_FORMAT",
+                    }
         else:
             # ------------------------------------------------------------------
             # B) First-turn: extract intent from LLM
@@ -722,10 +836,21 @@ class OllamaOrchestrator:
             if op == "WITHDRAW":
                 # Check for missing account_id first
                 if not acct_id:
-                    if len(accounts) == 1:
-                        intent["account_id"] = accounts[0]["id"]
-                        acct_id = accounts[0]["id"]
-                    else:
+                    # Filter accounts by type if account_type is specified
+                    acct_type = intent.get("account_type")
+                    candidates = accounts
+                    if acct_type:
+                        candidates = [
+                            acc for acc in accounts 
+                            if (acc.get("type") or "").upper() == acct_type.upper()
+                        ]
+                    
+                    if len(candidates) == 1:
+                        # Auto-select if only one matching account
+                        intent["account_id"] = candidates[0]["id"]
+                        acct_id = candidates[0]["id"]
+                    elif len(candidates) > 1:
+                        # Multiple matching accounts - ask user to choose
                         options = [
                             {
                                 "id": acc["id"],
@@ -734,7 +859,7 @@ class OllamaOrchestrator:
                                 "balance": acc.get("balance"),
                                 "currency": acc.get("currency"),
                             }
-                            for acc in accounts
+                            for acc in candidates
                         ]
                         logging.info("[process_conversation] WITHDRAW missing account_id, asking for clarification.")
                         return {
@@ -744,6 +869,14 @@ class OllamaOrchestrator:
                             "options": options,
                             "missing_fields": ["account_id is required"],
                             "error": "MISSING_FIELDS",
+                        }
+                    else:
+                        # No matching accounts
+                        logging.error("[process_conversation] WITHDRAW: no matching accounts found for type %s", acct_type)
+                        return {
+                            "success": False,
+                            "message": f"No {acct_type.lower() if acct_type else ''} accounts found.",
+                            "error": "NO_MATCHING_ACCOUNTS",
                         }
                 
                 # Then check for missing amount
@@ -815,10 +948,21 @@ class OllamaOrchestrator:
             if op == "CASH_DEPOSIT":
                 # Check for missing account_id first
                 if not acct_id:
-                    if len(accounts) == 1:
-                        intent["account_id"] = accounts[0]["id"]
-                        acct_id = accounts[0]["id"]
-                    else:
+                    # Filter accounts by type if account_type is specified
+                    acct_type = intent.get("account_type")
+                    candidates = accounts
+                    if acct_type:
+                        candidates = [
+                            acc for acc in accounts 
+                            if (acc.get("type") or "").upper() == acct_type.upper()
+                        ]
+                    
+                    if len(candidates) == 1:
+                        # Auto-select if only one matching account
+                        intent["account_id"] = candidates[0]["id"]
+                        acct_id = candidates[0]["id"]
+                    elif len(candidates) > 1:
+                        # Multiple matching accounts - ask user to choose
                         options = [
                             {
                                 "id": acc["id"],
@@ -827,7 +971,7 @@ class OllamaOrchestrator:
                                 "balance": acc.get("balance"),
                                 "currency": acc.get("currency"),
                             }
-                            for acc in accounts
+                            for acc in candidates
                         ]
                         logging.info("[process_conversation] CASH_DEPOSIT missing account_id, asking for clarification.")
                         return {
@@ -837,6 +981,14 @@ class OllamaOrchestrator:
                             "options": options,
                             "missing_fields": ["account_id is required"],
                             "error": "MISSING_FIELDS",
+                        }
+                    else:
+                        # No matching accounts
+                        logging.error("[process_conversation] CASH_DEPOSIT: no matching accounts found for type %s", acct_type)
+                        return {
+                            "success": False,
+                            "message": f"No {acct_type.lower() if acct_type else ''} accounts found.",
+                            "error": "NO_MATCHING_ACCOUNTS",
                         }
                 
                 # For cash deposit, amount is not required upfront (user will insert bills)
@@ -904,12 +1056,25 @@ class OllamaOrchestrator:
                     }
 
             elif op == "CHECK_DEPOSIT":
+                logging.info("[process_conversation] CHECK_DEPOSIT handler: acct_id=%s, intent=%s", acct_id, intent)
+                
                 # Check for missing account_id first
                 if not acct_id:
-                    if len(accounts) == 1:
-                        intent["account_id"] = accounts[0]["id"]
-                        acct_id = accounts[0]["id"]
+                    logging.info("[process_conversation] CHECK_DEPOSIT: no account_id, asking user to select")
+                    # Filter accounts by type if account_type is specified
+                    acct_type = intent.get("account_type")
+                    candidates = accounts
+                    if acct_type:
+                        candidates = [
+                            acc for acc in accounts 
+                            if (acc.get("type") or "").upper() == acct_type.upper()
+                        ]
+                        logging.info("[process_conversation] CHECK_DEPOSIT: filtered %d candidates for type %s", len(candidates), acct_type)
                     else:
+                        logging.info("[process_conversation] CHECK_DEPOSIT: no account_type filter, using all %d accounts", len(accounts))
+                    
+                    # Always ask user to choose - no auto-selection
+                    if len(candidates) > 0:
                         options = [
                             {
                                 "id": acc["id"],
@@ -918,32 +1083,90 @@ class OllamaOrchestrator:
                                 "balance": acc.get("balance"),
                                 "currency": acc.get("currency"),
                             }
-                            for acc in accounts
+                            for acc in candidates
                         ]
-                        logging.warning("[process_conversation] CHECK_DEPOSIT: missing account_id, asking for clarification.")
+                        question = f"Which account would you like to deposit the check into?"
+                        logging.info("[process_conversation] CHECK_DEPOSIT: asking for account selection with %d options", len(options))
                         return {
                             "success": False,
                             "clarification_needed": True,
-                            "question": "Which account would you like to deposit the check into?",
+                            "question": question,
                             "options": options,
                             "missing_fields": ["account_id is required"],
                             "error": "MISSING_FIELDS",
+                            "_pending_intent": intent,
                         }
-
+                    else:
+                        # No matching accounts found
+                        logging.error("[process_conversation] CHECK_DEPOSIT: no matching accounts found for type %s", acct_type)
+                        return {
+                            "success": False,
+                            "message": f"No {acct_type.lower() if acct_type else ''} accounts found.",
+                            "error": "NO_MATCHING_ACCOUNTS",
+                        }
+                
+                # Conversational flow: Ask for number of checks and amounts
                 acc = next((a for a in accounts if a["id"] == acct_id), None)
                 acc_label = acc.get("account_name") if acc else "your account"
-                if amt:
-                    human_msg = (
-                        f"I'll help you deposit a check for ${amt:.2f} into {acc_label}. "
-                        "Please insert the check and confirm on the screen."
-                    )
-                else:
-                    human_msg = (
-                        f"I'll help you deposit your check into {acc_label}. "
-                        "Please insert the check and confirm the amount on the screen."
-                    )
+                logging.info("[process_conversation] CHECK_DEPOSIT: found account %s (id=%s)", acc_label, acct_id)
+                
+                # Check if we're collecting check information conversationally
+                check_collection_state = intent.get("_check_collection_state", {})
+                logging.info("[process_conversation] CHECK_DEPOSIT: check_collection_state=%s", check_collection_state)
+                
+                if not check_collection_state.get("num_checks"):
+                    # Step 1: Ask for number of checks
+                    logging.info("[process_conversation] CHECK_DEPOSIT: asking for number of checks (acct_id=%s, acc_label=%s)", acct_id, acc_label)
+                    
+                    # CRITICAL: Ensure account_id is preserved in the pending intent
+                    if not intent.get("account_id"):
+                        logging.error("[process_conversation] CHECK_DEPOSIT: account_id is MISSING in intent when asking for num_checks!")
+                        intent["account_id"] = acct_id
+                    
+                    return {
+                        "success": False,
+                        "clarification_needed": True,
+                        "question": f"How many checks would you like to deposit into {acc_label}?",
+                        "options": [],
+                        "missing_fields": ["number_of_checks"],
+                        "error": "MISSING_FIELDS",
+                        "_pending_intent": intent,  # Store intent for next iteration
+                    }
+                
+                num_checks = check_collection_state.get("num_checks")
+                collected_checks = check_collection_state.get("checks", [])
+                
+                # Step 2: Collect amount for each check
+                if len(collected_checks) < num_checks:
+                    check_index = len(collected_checks) + 1
+                    logging.info(f"[process_conversation] CHECK_DEPOSIT: asking for amount of check {check_index}/{num_checks}, acct_id={acct_id}")
+                    
+                    # CRITICAL: Ensure account_id is preserved in the pending intent
+                    if not intent.get("account_id"):
+                        logging.error("[process_conversation] CHECK_DEPOSIT: account_id is MISSING in intent when asking for check amount!")
+                        intent["account_id"] = acct_id
+                    
+                    return {
+                        "success": False,
+                        "clarification_needed": True,
+                        "question": f"What is the amount of check #{check_index}?",
+                        "options": [],
+                        "missing_fields": [f"check_{check_index}_amount"],
+                        "error": "MISSING_FIELDS",
+                        "_pending_intent": intent,  # Store intent for next iteration
+                    }
+                
+                # All checks collected - proceed to UI flow with pre-populated checks
+                logging.info(f"[process_conversation] CHECK_DEPOSIT: {num_checks} checks collected, proceeding to flow_steps")
+                logging.info(f"[process_conversation] CHECK_DEPOSIT: collected_checks data: {collected_checks}")
+                logging.info(f"[process_conversation] CHECK_DEPOSIT: account_id: {acct_id}")
+                total_amount = sum(check["amount"] for check in collected_checks)
+                human_msg = (
+                    f"I'll help you deposit {num_checks} check{'s' if num_checks > 1 else ''} "
+                    f"(total ${total_amount:.2f}) into {acc_label}. "
+                    "Please review the details on the screen."
+                )
 
-                logging.info("[process_conversation] CHECK_DEPOSIT -> flow_steps")
                 return {
                     "success": True,
                     "message": human_msg,
@@ -953,13 +1176,14 @@ class OllamaOrchestrator:
                             "step": "deposit_type_selection",
                             "data": {
                                 "preselected_type": "check",
+                                "account_id": acct_id,
                             },
                         },
                         {
                             "step": "check_deposit_screen",
                             "data": {
-                                "check_number": intent.get("check_number"),
-                                "amount": float(amt) if amt else None,
+                                "account_id": acct_id,
+                                "checks": collected_checks,  # Pre-populate with collected checks
                             },
                         },
                         {
@@ -975,13 +1199,45 @@ class OllamaOrchestrator:
                 }
 
             elif op == "TRANSFER":
-                # Check for missing source account first
+                # Try to resolve source account from source_account_type if not already set
+                if not src_id:
+                    src_type = intent.get("source_account_type")
+                    if src_type:
+                        src_id = self.pick_account_id_for_type(src_type, accounts)
+                        if src_id:
+                            intent["source_account_id"] = src_id
+                            intent["from_account_id"] = src_id
+                            logging.info("[process_conversation] TRANSFER: resolved source_account_type '%s' to account_id %s", src_type, src_id)
+                
+                # Try to resolve destination account from destination_account_type if not already set
+                if not dst_id:
+                    dst_type = intent.get("destination_account_type")
+                    if dst_type:
+                        # For destination, exclude source account
+                        dst_candidates = [a for a in accounts if a["id"] != src_id] if src_id else accounts
+                        dst_id = self.pick_account_id_for_type(dst_type, dst_candidates)
+                        if dst_id:
+                            intent["destination_account_id"] = dst_id
+                            intent["to_account_id"] = dst_id
+                            logging.info("[process_conversation] TRANSFER: resolved destination_account_type '%s' to account_id %s", dst_type, dst_id)
+                
+                # Check for missing source account
                 if not src_id:
                     if len(accounts) == 1:
                         intent["source_account_id"] = accounts[0]["id"]
                         intent["from_account_id"] = accounts[0]["id"]
                         src_id = accounts[0]["id"]
                     else:
+                        # Filter by source account type if specified
+                        src_type = intent.get("source_account_type")
+                        candidates = accounts
+                        if src_type:
+                            src_type_upper = src_type.upper()
+                            candidates = [a for a in accounts if (a.get("type") or "").upper() == src_type_upper]
+                            if not candidates:
+                                logging.warning("[process_conversation] TRANSFER: no accounts match source_account_type=%s, using all accounts", src_type)
+                                candidates = accounts
+                        
                         options = [
                             {
                                 "id": acc["id"],
@@ -990,7 +1246,7 @@ class OllamaOrchestrator:
                                 "balance": acc.get("balance"),
                                 "currency": acc.get("currency"),
                             }
-                            for acc in accounts
+                            for acc in candidates
                         ]
                         logging.warning("[process_conversation] TRANSFER: missing source_account_id, asking for clarification.")
                         return {
@@ -1000,11 +1256,23 @@ class OllamaOrchestrator:
                             "options": options,
                             "missing_fields": ["from_account_id is required"],
                             "error": "MISSING_FIELDS",
+                            "_pending_intent": intent,
                         }
 
                 # Check for missing destination account
                 if not dst_id and not intent.get("is_external"):
-                    # Filter out source account from options
+                    # Filter by destination account type if specified
+                    dst_type = intent.get("destination_account_type")
+                    candidates = [a for a in accounts if a["id"] != src_id]  # Exclude source account
+                    
+                    if dst_type and candidates:
+                        dst_type_upper = dst_type.upper()
+                        typed_candidates = [a for a in candidates if (a.get("type") or "").upper() == dst_type_upper]
+                        if typed_candidates:
+                            candidates = typed_candidates
+                        else:
+                            logging.warning("[process_conversation] TRANSFER: no accounts match destination_account_type=%s, using all remaining accounts", dst_type)
+                    
                     destination_options = [
                         {
                             "id": acc["id"],
@@ -1013,7 +1281,7 @@ class OllamaOrchestrator:
                             "balance": acc.get("balance"),
                             "currency": acc.get("currency"),
                         }
-                        for acc in accounts if acc["id"] != src_id
+                        for acc in candidates
                     ]
                     if destination_options:
                         logging.warning("[process_conversation] TRANSFER: missing destination_account_id, asking for clarification.")
@@ -1024,6 +1292,7 @@ class OllamaOrchestrator:
                             "options": destination_options,
                             "missing_fields": ["to_account_id is required"],
                             "error": "MISSING_FIELDS",
+                            "_pending_intent": intent,
                         }
                     else:
                         logging.warning("[process_conversation] TRANSFER: no destination accounts available.")

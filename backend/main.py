@@ -917,15 +917,21 @@ async def web_chat(
     ]
     logging.info("accounts_data for session %s: %s", request.session_id, accounts_data)
 
+    # Build session context with pending_intent if provided
+    session_ctx = {
+        "session_id": request.session_id,
+        "customer_id": db_session.customer_id,
+        "accounts": accounts_data
+    }
+    if request.pending_intent:
+        session_ctx["pending_intent"] = request.pending_intent
+        logging.info("[web_chat] Received pending_intent: %s", request.pending_intent)
+
     # Process with orchestrator
     result = await orchestrator.process_conversation(
         message=request.message,
         conversation_history=conversation_history,
-        session_context={
-            "session_id": request.session_id,
-            "customer_id": db_session.customer_id,
-            "accounts": accounts_data
-        }
+        session_context=session_ctx
     )
 
     # Save assistant response (if message present)
@@ -1147,76 +1153,112 @@ async def check_deposit(
     current_session: DBSession = Depends(get_current_session),
     session: Session = Depends(get_session)
 ):
-    """Process check deposit."""
-    logging.info(f"Check deposit request received for account id {request.account_id}")
+    """Process check deposit (supports multiple checks)."""
+    logging.info(f"Check deposit request received for account id {request.account_id}, {len(request.checks)} check(s)")
     account = session.get(Account, request.account_id)
     logging.info(f"Account id {request.account_id}")
     if not account or account.customer_id != current_session.customer_id:
         logging.info(f"[CHECK DEPOSIT] Account not found or unauthorized for account id: {request.account_id}")
         raise HTTPException(status_code=404, detail="Account not found")
-    # Update account balance
-    account.balance += request.amount
-    logging.info(f"New account balance {account.balance}")
-    # Create transaction
-    transaction = Transaction(
-        operation=OperationType.CHECK_DEPOSIT,
-        to_account_id=account.id,
-        amount=request.amount,
-        status=TransactionStatus.COMPLETED,
-        receipt_mode=request.receipt_mode,
-        timestamp=datetime.utcnow()
-    )
-    session.add(transaction)
-    session.commit()
-    session.refresh(transaction)
-    # Create check deposit record with hold
+    
+    # Auto-generate check details if not provided (simulating device detection)
+    import random
     from datetime import timedelta
-    hold_days = 2  # 2 business days hold
-    hold_until = datetime.utcnow() + timedelta(days=hold_days)
-    check_deposit_record = CheckDeposit(
-        transaction_id=transaction.id,
-        check_number=request.check_number,
-        check_date=datetime.strptime(request.check_date, "%Y-%m-%d"),
-        payer_name=request.payer_name,
-        payer_account=request.payer_account,
-        check_image_front=request.check_image_front,
-        check_image_back=request.check_image_back,
-        endorsement_confirmed=request.endorsement_confirmed,
-        hold_until_date=hold_until,
-        hold_reason="Standard hold period",
-        verification_status=CheckDepositStatus.PENDING
-    )
-    session.add(check_deposit_record)
+    
+    total_amount = 0.0
+    check_deposit_records = []
+    transaction_ids = []
+    
+    # Process each check
+    for idx, check in enumerate(request.checks):
+        check_number = check.check_number or f"CHK{random.randint(100000, 999999)}"
+        check_date_str = check.check_date or datetime.utcnow().strftime("%Y-%m-%d")
+        payer_name = check.payer_name or random.choice([
+            "ABC Corporation",
+            "XYZ Industries",
+            "John Smith",
+            "Jane Doe",
+            "Global Services LLC",
+            "Tech Solutions Inc."
+        ])
+        
+        logging.info(f"[CHECK DEPOSIT] Check {idx+1} - Number: {check_number}, Date: {check_date_str}, Payer: {payer_name}, Amount: ${check.amount:.2f}")
+        
+        # Create transaction for each check
+        transaction = Transaction(
+            operation=OperationType.CHECK_DEPOSIT,
+            to_account_id=account.id,
+            amount=check.amount,
+            status=TransactionStatus.COMPLETED,
+            receipt_mode=request.receipt_mode,
+            timestamp=datetime.utcnow()
+        )
+        session.add(transaction)
+        session.flush()  # Get transaction ID
+        
+        transaction_ids.append(transaction.id)
+        total_amount += check.amount
+        
+        # Create check deposit record with hold
+        hold_days = 2  # 2 business days hold
+        hold_until = datetime.utcnow() + timedelta(days=hold_days)
+        check_deposit_record = CheckDeposit(
+            transaction_id=transaction.id,
+            check_number=check_number,
+            check_date=datetime.strptime(check_date_str, "%Y-%m-%d"),
+            payer_name=payer_name,
+            payer_account=check.payer_account,
+            check_image_front=check.check_image_front,
+            check_image_back=check.check_image_back,
+            endorsement_confirmed=request.endorsement_confirmed,
+            hold_until_date=hold_until,
+            hold_reason="Standard hold period",
+            verification_status=CheckDepositStatus.PENDING
+        )
+        session.add(check_deposit_record)
+        check_deposit_records.append(check_deposit_record)
+    
+    # Update account balance with total amount
+    account.balance += total_amount
+    logging.info(f"New account balance {account.balance} (deposited {len(request.checks)} checks totaling ${total_amount:.2f})")
+    
     session.commit()
-    logging.info(f"[CHECK DEPOSIT] Check deposit record created: {check_deposit_record}")
-    # Send email receipt
+    
+    # Send email receipt (for all checks combined)
     receipt_sent = False
     if request.receipt_mode == ReceiptMode.EMAIL:
         customer = session.get(Customer, current_session.customer_id)
-        details = format_check_deposit_details(
-            transaction.id,
-            account.account_number_masked,
-            request.check_number,
-            request.check_date,
-            request.payer_name,
-            request.amount,
-            "Pending Verification",
-            account.balance,
-            hold_until.strftime("%B %d, %Y")
-        )
+        # Format details for all checks
+        check_details_list = [
+            f"  Check #{rec.check_number}: ${chk.amount:.2f} from {rec.payer_name} (dated {rec.check_date.strftime('%Y-%m-%d')})"
+            for rec, chk in zip(check_deposit_records, request.checks)
+        ]
+        details = f"""
+Transaction ID: {transaction_ids[0]} (and {len(transaction_ids)-1} more)
+Account: {account.account_number_masked}
+Number of Checks: {len(request.checks)}
+Total Amount: ${total_amount:.2f}
+
+Check Details:
+{chr(10).join(check_details_list)}
+
+New Balance: ${account.balance:.2f}
+Hold Until: {check_deposit_records[0].hold_until_date.strftime('%B %d, %Y')}
+Status: Pending Verification
+"""
         logging.info(f"[CHECK DEPOSIT] Sending email receipt to {customer.primary_email}")
         receipt_sent = await send_receipt_email(customer.primary_email, "check_deposit", details)
         logging.info(f"[CHECK DEPOSIT] Email receipt sent: {receipt_sent}")
 
     return CheckDepositResponse(
         success=True,
-        transaction_id=transaction.id,
-        check_deposit_id=check_deposit_record.id,
+        transaction_id=transaction_ids[0],  # Return first transaction ID
+        check_deposit_id=check_deposit_records[0].id,
         new_balance=account.balance,
-        hold_until_date=hold_until.strftime("%Y-%m-%d"),
+        hold_until_date=check_deposit_records[0].hold_until_date.strftime("%Y-%m-%d"),
         verification_status=CheckDepositStatus.PENDING,
         receipt_sent=receipt_sent,
-        message="Check deposit successful. Funds will be available after verification."
+        message=f"{len(request.checks)} check(s) deposited successfully (total ${total_amount:.2f}). Funds will be available after verification."
     )
 
 # --- Updated /channels/web/chat endpoint to return orchestrator result as-is (including clarification fields) ---

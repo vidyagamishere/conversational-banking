@@ -356,6 +356,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None
     message: str
     language: Optional[str] = "en"
+    pending_intent: Optional[Dict[str, Any]] = None
 
 
 class ChatResponse(BaseModel):
@@ -417,16 +418,19 @@ class CashDepositResponse(BaseModel):
     message: str
 
 # Check Deposit Schemas
-class CheckDepositRequest(BaseModel):
-    account_id: int
-    check_number: str
-    check_date: str  # Format: YYYY-MM-DD
-    payer_name: str
+class SingleCheckDetail(BaseModel):
+    check_number: Optional[str] = None  # Auto-detected by device, optional for simulation
+    check_date: Optional[str] = None  # Format: YYYY-MM-DD, auto-filled if not provided
+    payer_name: Optional[str] = None  # Auto-detected by device, optional for simulation
     payer_account: Optional[str] = None
     amount: float
     check_image_front: Optional[str] = None  # Base64
     check_image_back: Optional[str] = None   # Base64
-    endorsement_confirmed: bool
+
+class CheckDepositRequest(BaseModel):
+    account_id: int
+    checks: List[SingleCheckDetail]  # Support multiple checks
+    endorsement_confirmed: bool = True  # Default to True for simulation
     receipt_mode: ReceiptMode = ReceiptMode.EMAIL
 
 class CheckDepositResponse(BaseModel):
